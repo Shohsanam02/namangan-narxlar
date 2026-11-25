@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Buyurtma{% endblock %}
+{% block content %}
+<h1>Buyurtma: {{ group.store.name }}</h1>
+<p class="sub">Jami: <b>{{ group.total|floatformat:0|intcomma }} so'm</b> · {{ group.items|length }} ta mahsulot · to'lov yetkazilganda</p>
+<div class="card" style="max-width:480px">
+<form method="post">{% csrf_token %}{{ form.as_p }}<button class="btn">Tasdiqlash</button></form>
+</div>
+{% endblock %}

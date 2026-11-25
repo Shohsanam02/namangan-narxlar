@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ product.name }} — narxlar{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<h1>{{ product.name }}</h1>
+<p class="sub">{{ product.category.name }} · narx 1 {{ product.unit }} uchun, so'mda</p>
+<div class="grid2">
+<div class="card">
+  <h3 style="margin-top:0">Do'konlar bo'yicha (arzonidan)</h3>
+  <table>
+    <thead><tr><th>Do'kon</th><th class="num">Narx</th><th class="num">7 kunda</th><th>Buyurtma</th></tr></thead>
+    <tbody>
+    {% for o in offers %}
+      <tr>
+        <td><a href="{% url 'store_detail' o.store.slug %}">{{ o.store.name }}</a>{% if forloop.first and offers|length > 1 %} <span class="badge active">eng arzon</span>{% endif %}</td>
+        <td class="num"><b>{{ o.price|intcomma }}</b></td>
+        <td class="num">{% if o.change is None %}<span class="muted">—</span>{% elif o.change > 0 %}<span class="up">▲ {{ o.change|floatformat:1 }}%</span>{% elif o.change < 0 %}<span class="down">▼ {{ o.change|floatformat:1 }}%</span>{% else %}<span class="muted">0%</span>{% endif %}</td>
+        <td>
+          {% if o.store.is_open %}
+          <form method="post" action="{% url 'cart_add' %}" class="inline">{% csrf_token %}
+            <input type="hidden" name="store" value="{{ o.store.id }}"><input type="hidden" name="product" value="{{ product.id }}">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <input name="qty" value="1" style="width:60px" aria-label="Miqdor">
+            <button class="btn small">Savatga</button>
+          </form>
+          {% else %}<span class="muted">yopiq</span>{% endif %}
+        </td>
+      </tr>
+    {% empty %}<tr><td colspan="4" class="muted">Joriy narx yo'q.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <p style="margin:14px 0 0"><a class="btn ghost small" href="{% url 'add_price' %}?product={{ product.id }}">+ Bu mahsulot narxini yozish</a></p>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">Narx o'zgarishi (30 kun)</h3>
+  <canvas id="history" height="240"></canvas>
+</div>
+</div>
+<div class="card">
+  <h3 style="margin-top:0">Oxirgi yozuvlar</h3>
+  <table>
+    <thead><tr><th>Sana</th><th>Do'kon</th><th class="num">Narx</th><th>Kim yozdi</th></tr></thead>
+    <tbody>{% for e in recent %}<tr><td>{{ e.date|date:"d.m.Y" }}</td><td>{{ e.store }}</td><td class="num">{{ e.price|intcomma }}</td><td class="muted">{{ e.author|default:"—" }}</td></tr>{% endfor %}</tbody>
+  </table>
+</div>
+{{ history|json_script:"history-data" }}
+<script>
+  const h = JSON.parse(document.getElementById("history-data").textContent);
+  const colors = ["#0f766e","#b91c1c","#1d4ed8","#b45309","#7c3aed","#be185d","#4d7c0f"];
+  new Chart(document.getElementById("history"), {
+    type: "line",
+    data: { labels: h.labels, datasets: h.datasets.map((d, i) => ({ ...d, borderColor: colors[i % colors.length],
+            backgroundColor: colors[i % colors.length], spanGaps: true, tension: .25, pointRadius: 2 })) },
+    options: { interaction: { mode: "index", intersect: false },
+               scales: { y: { ticks: { callback: v => v.toLocaleString("ru-RU") } } } }
+  });
+</script>
+{% endblock %}

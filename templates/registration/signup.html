@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Ro'yxatdan o'tish{% endblock %}
+{% block content %}
+<h1>Ro'yxatdan o'tish</h1>
+<div class="card" style="max-width:480px">
+<form method="post">{% csrf_token %}{{ form.as_p }}<button class="btn">Ro'yxatdan o'tish</button></form>
+</div>
+{% endblock %}

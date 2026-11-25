@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Kirish{% endblock %}
+{% block content %}
+<h1>Kirish</h1>
+<div class="card" style="max-width:420px">
+<form method="post">{% csrf_token %}{{ form.as_p }}<input type="hidden" name="next" value="{{ next }}"><button class="btn">Kirish</button></form>
+<p class="muted">Akkaunt yo'qmi? <a href="{% url 'signup' %}">Ro'yxatdan o'ting</a></p>
+</div>
+{% endblock %}

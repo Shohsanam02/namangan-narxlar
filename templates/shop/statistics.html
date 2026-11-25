@@ -1,0 +1,49 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Do'konlar statistikasi{% endblock %}
+{% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>{% endblock %}
+{% block content %}
+<h1>Do'konlar statistikasi</h1>
+<p class="sub">Eng qimmat do'kon tepada, eng arzoni pastda. <b>Narx indeksi</b>: 100 = shahar o'rtachasi (median), 110 = 10% qimmat, 90 = 10% arzon.</p>
+<div class="card">
+<table>
+  <thead><tr>
+    <th>#</th><th>Do'kon</th><th class="num">Narx indeksi</th><th></th>
+    <th class="num">Eng arzon<br>mahsulotlar</th>
+    <th>Savdo holati</th><th class="num">Buyurtmalar<br>({{ activity_days }} kun)</th><th class="num">Savdo hajmi<br>({{ activity_days }} kun)</th>
+  </tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td class="muted">{{ forloop.counter }}</td>
+      <td><a href="{% url 'store_detail' r.store.slug %}"><b>{{ r.store.name }}</b></a><br><span class="muted" style="font-size:.85rem">{{ r.products }} ta mahsulot solishtirildi</span></td>
+      <td class="num">{% if r.index %}<b class="{% if r.index > 100 %}up{% elif r.index < 100 %}down{% endif %}">{{ r.index }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if r.index %}<div class="bar"><span style="width:{% widthratio r.index 130 100 %}%;background:{% if r.index > 100 %}var(--up){% else %}var(--down){% endif %}"></span></div>{% endif %}</td>
+      <td class="num">{{ r.cheapest }}</td>
+      <td><span class="badge {{ r.activity.css }}">{{ r.activity.status }}</span></td>
+      <td class="num">{{ r.activity.orders }}</td>
+      <td class="num">{{ r.activity.revenue|floatformat:0|intcomma }} so'm</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted" style="font-size:.85rem;margin:12px 0 0">
+  Savdo holati: <span class="badge active">Faol</span> — oxirgi {{ activity_days }} kunda {{ active_min }}+ buyurtma;
+  <span class="badge slow">Sust</span> — 1–{{ active_min|add:"-1" }} ta;
+  <span class="badge inactive">Faolsiz</span> — buyurtma yo'q yoki do'kon yopiq.
+</p>
+</div>
+<div class="card"><h3 style="margin-top:0">Narx indeksi</h3><canvas id="idx" height="110"></canvas></div>
+{{ chart|json_script:"chart-data" }}
+<script>
+  const c = JSON.parse(document.getElementById("chart-data").textContent);
+  new Chart(document.getElementById("idx"), {
+    type: "bar",
+    // 100 dan og'ish chiziladi: 0 dan boshlangan ustunlarda 104 va 97 deyarli bir xil ko'rinadi.
+    data: { labels: c.labels, datasets: [{ label: "O'rtachadan farq, %", data: c.data.map(v => +(v - 100).toFixed(1)),
+            backgroundColor: c.data.map(v => v > 100 ? "#b91c1c" : "#15803d") }] },
+    options: { indexAxis: "y", plugins: { legend: { display: false },
+                 tooltip: { callbacks: { label: ctx => (ctx.raw > 0 ? "+" : "") + ctx.raw + "% (indeks " + c.data[ctx.dataIndex] + ")" } } },
+               scales: { x: { ticks: { callback: v => (v > 0 ? "+" : "") + v + "%" } } } }
+  });
+</script>
+{% endblock %}

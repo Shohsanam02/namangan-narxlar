@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Savat{% endblock %}
+{% block content %}
+<h1>Savat</h1>
+<p class="sub">Har bir do'kon uchun alohida buyurtma beriladi. To'lov — yetkazib berilganda naqd.</p>
+{% for g in groups %}
+<div class="card">
+  <h3 style="margin-top:0">{{ g.store.name }}</h3>
+  <table>
+    <thead><tr><th>Mahsulot</th><th class="num">Miqdor</th><th class="num">Narx</th><th class="num">Jami</th><th></th></tr></thead>
+    <tbody>
+    {% for i in g.items %}
+      <tr>
+        <td>{{ i.product.name }}</td><td class="num">{{ i.qty|floatformat:-2 }} {{ i.product.unit }}</td>
+        <td class="num">{% if i.price %}{{ i.price|intcomma }}{% else %}<span class="up">narx yo'q</span>{% endif %}</td>
+        <td class="num">{{ i.subtotal|floatformat:0|intcomma }}</td>
+        <td><form method="post" action="{% url 'cart_remove' %}" style="margin:0">{% csrf_token %}
+          <input type="hidden" name="store" value="{{ g.store.id }}"><input type="hidden" name="product" value="{{ i.product.id }}">
+          <button class="btn ghost small" aria-label="Olib tashlash">✕</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 0">
+    <b>Jami: {{ g.total|floatformat:0|intcomma }} so'm</b>
+    <a class="btn" href="{% url 'checkout' g.store.id %}">Buyurtma berish</a>
+  </p>
+</div>
+{% empty %}
+<div class="card muted">Savat bo'sh. <a href="{% url 'home' %}">Mahsulotlarni ko'ring</a>.</div>
+{% endfor %}
+{% endblock %}

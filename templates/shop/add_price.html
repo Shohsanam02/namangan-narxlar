@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Narx yozish{% endblock %}
+{% block content %}
+<h1>Narx yozish</h1>
+<p class="sub">Do'konda ko'rgan narxingizni kiriting. Bir kunda bir mahsulotga bitta narx — qayta yozsangiz yangilanadi.</p>
+<div class="card" style="max-width:480px">
+<form method="post">{% csrf_token %}{{ form.as_p }}<button class="btn">Saqlash</button></form>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% load humanize %}
+{% block content %}
+<h1>Qayerda arzon?</h1>
+<p class="sub">Namangandagi do'konlar narxlari — foydalanuvchilar yozib boradi. Narx = oxirgi 7 kundagi yozuvlar medianasi.</p>
+<form method="get" class="chips">
+  <a class="chip {% if not active_category %}on{% endif %}" href="{% url 'home' %}">Hammasi</a>
+  {% for c in categories %}
+    <a class="chip {% if active_category == c.slug %}on{% endif %}" href="?kategoriya={{ c.slug }}">{{ c.name }}</a>
+  {% endfor %}
+  <input name="q" value="{{ q }}" placeholder="Mahsulot qidirish..." style="margin-left:auto">
+</form>
+<div class="card">
+<table>
+  <thead><tr><th>Mahsulot</th><th>Eng arzon do'kon</th><th class="num">Eng arzon</th><th class="num">Eng qimmat</th><th class="num">Do'konlar</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td><a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a> <span class="muted">/ {{ r.product.unit }}</span></td>
+      <td><a href="{% url 'store_detail' r.min_store.slug %}">{{ r.min_store.name }}</a></td>
+      <td class="num down"><b>{{ r.min_price|intcomma }}</b></td>
+      <td class="num up">{{ r.max_price|intcomma }}</td>
+      <td class="num muted">{{ r.store_count }}</td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="5" class="muted">Hozircha narx yo'q. <a href="{% url 'add_price' %}">Birinchi bo'lib yozing</a>.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
