@@ -1,7 +1,8 @@
 from decimal import Decimal
 
 from django.conf import settings
-from django.core.validators import MinValueValidator
+from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -13,6 +14,16 @@ class Store(models.Model):
     slug = models.SlugField(unique=True)
     address = models.CharField("Manzil", max_length=200, blank=True)
     is_open = models.BooleanField("Buyurtma qabul qiladi", default=True)
+    latitude = models.DecimalField(
+        "Kenglik (latitude)", max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(-90), MaxValueValidator(90)],
+    )
+    longitude = models.DecimalField(
+        "Uzunlik (longitude)", max_digits=9, decimal_places=6, null=True, blank=True,
+        validators=[MinValueValidator(-180), MaxValueValidator(180)],
+    )
+    # Tasdiqlanmagan nuqtaga "yo'l ko'rsatish" berilmaydi — odamni noto'g'ri joyga yubormaslik uchun.
+    location_verified = models.BooleanField("Joylashuv tekshirilgan", default=False)
 
     class Meta:
         ordering = ["name"]
@@ -21,6 +32,12 @@ class Store(models.Model):
 
     def __str__(self):
         return self.name
+
+    def clean(self):
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValidationError("Kenglik va uzunlik ikkalasi ham kiritilishi kerak.")
+        if self.location_verified and self.latitude is None:
+            raise ValidationError("Koordinatasiz joylashuvni tekshirilgan deb belgilab bo'lmaydi.")
 
 
 class Category(models.Model):
@@ -66,6 +83,7 @@ class PriceEntry(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="price_entries"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    photo = models.ImageField("Narx yorlig'i rasmi (ixtiyoriy)", upload_to="prices/%Y/%m/", blank=True)
 
     class Meta:
         ordering = ["-date", "-created_at"]
@@ -80,6 +98,39 @@ class PriceEntry(models.Model):
 
     def __str__(self):
         return f"{self.product} @ {self.store}: {self.price} ({self.date})"
+
+
+class Discount(models.Model):
+    """Do'kondagi mahsulotga ma'lum muddatli chegirma.
+
+    Foizda saqlanadi: joriy narx foydalanuvchi yozuvlaridan o'zgarib turadi,
+    qat'iy "chegirma narxi" esa tezda eskirib qolardi.
+    """
+
+    store = models.ForeignKey(Store, on_delete=models.CASCADE, related_name="discounts", verbose_name="Do'kon")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="discounts", verbose_name="Mahsulot")
+    percent = models.PositiveSmallIntegerField(
+        "Chegirma (%)", validators=[MinValueValidator(1), MaxValueValidator(90)]
+    )
+    start_date = models.DateField("Boshlanadi")
+    end_date = models.DateField("Tugaydi (shu kun ham kiradi)")
+
+    class Meta:
+        ordering = ["start_date", "store__name"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(end_date__gte=models.F("start_date")), name="discount_end_after_start"
+            )
+        ]
+        verbose_name = "Chegirma"
+        verbose_name_plural = "Chegirmalar"
+
+    def __str__(self):
+        return f"{self.store}: {self.product} -{self.percent}% ({self.start_date} - {self.end_date})"
+
+    def clean(self):
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValidationError({"end_date": "Tugash sanasi boshlanishdan oldin bo'lishi mumkin emas."})
 
 
 class Order(models.Model):
@@ -120,3 +171,40 @@ class OrderItem(models.Model):
     @property
     def subtotal(self):
         return self.unit_price * self.quantity
+
+
+class PriceVote(models.Model):
+    """"Narx to'g'rimi?" ovozi. Bitta foydalanuvchi bitta yozuvga bitta ovoz beradi."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="price_votes")
+    entry = models.ForeignKey(PriceEntry, on_delete=models.CASCADE, related_name="votes")
+    is_correct = models.BooleanField("To'g'ri")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "entry"], name="one_vote_per_user_entry")]
+        verbose_name = "Narx ovozi"
+        verbose_name_plural = "Narx ovozlari"
+
+
+class Favorite(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="favorites")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="favorites")
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "product"], name="one_favorite_per_user")]
+
+
+class PriceAlert(models.Model):
+    """"Narx shu summadan arzonlashsa xabar ber".
+
+    Xabar bazada saqlanmaydi: shart sahifa ochilganda tekshiriladi, shuning uchun fon jarayoni kerak emas.
+    """
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="price_alerts")
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="alerts")
+    target_price = models.DecimalField(
+        "Kutilgan narx (so'm)", max_digits=12, decimal_places=0, validators=[MinValueValidator(Decimal("1"))]
+    )
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["user", "product"], name="one_alert_per_user_product")]

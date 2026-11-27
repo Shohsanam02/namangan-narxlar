@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Haftalik hisobot{% endblock %}
+{% block content %}
+<h1>📊 Haftalik hisobot</h1>
+<p class="sub">Bugungi narxlar 7 kun oldingisi bilan solishtirildi (shahar bo'yicha median, chegirmasiz).</p>
+<div class="grid2">
+  <div class="card"><h3 style="margin-top:0">📈 Eng ko'p qimmatlashgan</h3>
+    <table><tbody>{% for r in up %}<tr><td><a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a></td><td class="num"><span class="muted">{{ r.old|intcomma }} →</span> <b>{{ r.new|intcomma }}</b></td><td class="num up">▲ {{ r.change }}%</td></tr>{% empty %}<tr><td class="muted">Qimmatlashgan mahsulot yo'q.</td></tr>{% endfor %}</tbody></table>
+  </div>
+  <div class="card"><h3 style="margin-top:0">📉 Eng ko'p arzonlashgan</h3>
+    <table><tbody>{% for r in down %}<tr><td><a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a></td><td class="num"><span class="muted">{{ r.old|intcomma }} →</span> <b>{{ r.new|intcomma }}</b></td><td class="num down">▼ {{ r.change }}%</td></tr>{% empty %}<tr><td class="muted">Arzonlashgan mahsulot yo'q.</td></tr>{% endfor %}</tbody></table>
+  </div>
+</div>
+{% endblock %}

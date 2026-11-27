@@ -7,7 +7,10 @@
   <b>#{{ o.pk }} · {{ o.store.name }}</b> <span class="muted">· {{ o.created_at|date:"d.m.Y H:i" }}</span>
   <span class="badge {% if o.status == 'delivered' %}active{% elif o.status == 'cancelled' %}inactive{% else %}slow{% endif %}">{{ o.get_status_display }}</span>
   <ul>{% for i in o.items.all %}<li>{{ i.product.name }} — {{ i.quantity|floatformat:-2 }} × {{ i.unit_price|intcomma }} = {{ i.subtotal|floatformat:0|intcomma }} so'm</li>{% endfor %}</ul>
-  <b>Jami: {{ o.total|floatformat:0|intcomma }} so'm</b>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <b>Jami: {{ o.total|floatformat:0|intcomma }} so'm</b>
+    <form method="post" action="{% url 'reorder' o.pk %}" style="margin:0">{% csrf_token %}<button class="btn ghost small">🔁 Qayta buyurtma</button></form>
+  </div>
 </div>
 {% empty %}<div class="card muted">Hali buyurtma yo'q.</div>{% endfor %}
 {% endblock %}

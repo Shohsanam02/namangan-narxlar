@@ -1,0 +1,10 @@
+<aside class="side">
+  <h2>Do'konlar</h2>
+  <a href="{% url 'home' %}" {% if request.resolver_match.url_name == 'home' %}class="on" aria-current="page"{% endif %}><span>Hammasi<small>narxlarni solishtirish</small></span></a>
+  {% for row in sidebar %}
+    <a href="{% url 'store_detail' row.store.slug %}" {% if store.id == row.store.id %}class="on" aria-current="page"{% endif %}>
+      <span>{{ row.store.name }}<small>{{ row.products }} ta mahsulot{% if not row.store.is_open %} · yopiq{% endif %}</small></span>
+      {% if row.discounts %}<span class="badge sale" title="Chegirmadagi mahsulotlar">🔥 {{ row.discounts }}</span>{% endif %}
+    </a>
+  {% endfor %}
+</aside>

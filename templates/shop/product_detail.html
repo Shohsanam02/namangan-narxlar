@@ -2,8 +2,19 @@
 {% block title %}{{ product.name }} — narxlar{% endblock %}
 {% block head %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>{% endblock %}
 {% block content %}
-<h1>{{ product.name }}</h1>
+<h1>{{ product.name }} {% if user.is_authenticated %}<form method="post" action="{% url 'toggle_favorite' product.id %}" style="display:inline;margin:0">{% csrf_token %}<input type="hidden" name="next" value="{{ request.path }}"><button class="heart" aria-pressed="{% if is_favorite %}true{% else %}false{% endif %}" aria-label="Sevimli">{% if is_favorite %}❤️{% else %}🤍{% endif %}</button></form>{% endif %}</h1>
 <p class="sub">{{ product.category.name }} · narx 1 {{ product.unit }} uchun, so'mda</p>
+<div class="card">
+  <b>🔔 Narx tushsa xabar berish</b>
+  {% if user.is_authenticated %}
+    <form method="post" action="{% url 'set_alert' product.id %}" class="inline" style="flex-wrap:wrap;margin-top:8px;align-items:center">{% csrf_token %}
+      <input type="number" name="target_price" min="1" step="1" required placeholder="masalan 95000" value="{{ alert.target_price|default_if_none:'' }}" aria-label="Kutilgan narx">
+      <span class="muted">so'm yoki undan arzon bo'lsa</span>
+      <button class="btn small">{% if alert %}Yangilash{% else %}Xabar ber{% endif %}</button>
+      {% if alert %}<a href="{% url 'alerts' %}">Xabarlarim</a>{% endif %}
+    </form>
+  {% else %}<span class="muted">— buning uchun <a href="{% url 'login' %}?next={{ request.path }}">kiring</a>.</span>{% endif %}
+</div>
 <div class="grid2">
 <div class="card">
   <h3 style="margin-top:0">Do'konlar bo'yicha (arzonidan)</h3>
@@ -13,7 +24,7 @@
     {% for o in offers %}
       <tr>
         <td><a href="{% url 'store_detail' o.store.slug %}">{{ o.store.name }}</a>{% if forloop.first and offers|length > 1 %} <span class="badge active">eng arzon</span>{% endif %}</td>
-        <td class="num"><b>{{ o.price|intcomma }}</b></td>
+        <td class="num">{% if o.discount %}<span class="old">{{ o.base|intcomma }}</span><br><b class="down">{{ o.price|intcomma }}</b><br><span class="badge sale">-{{ o.discount.percent }}% · {{ o.discount.end_date|date:"d.m" }} gacha</span>{% else %}<b>{{ o.price|intcomma }}</b>{% endif %}</td>
         <td class="num">{% if o.change is None %}<span class="muted">—</span>{% elif o.change > 0 %}<span class="up">▲ {{ o.change|floatformat:1 }}%</span>{% elif o.change < 0 %}<span class="down">▼ {{ o.change|floatformat:1 }}%</span>{% else %}<span class="muted">0%</span>{% endif %}</td>
         <td>
           {% if o.store.is_open %}
@@ -38,15 +49,34 @@
 </div>
 <div class="card">
   <h3 style="margin-top:0">Oxirgi yozuvlar</h3>
+  <p class="muted" style="margin-top:0">Narx to'g'rimi? Ovoz bering. 👎 soni 👍 dan 3 taga ko'p bo'lgan narx hisobdan chiqariladi.</p>
   <table>
-    <thead><tr><th>Sana</th><th>Do'kon</th><th class="num">Narx</th><th>Kim yozdi</th></tr></thead>
-    <tbody>{% for e in recent %}<tr><td>{{ e.date|date:"d.m.Y" }}</td><td>{{ e.store }}</td><td class="num">{{ e.price|intcomma }}</td><td class="muted">{{ e.author|default:"—" }}</td></tr>{% endfor %}</tbody>
+    <thead><tr><th>Sana</th><th>Do'kon</th><th class="num">Narx</th><th>Kim yozdi</th><th>Rasm</th><th>To'g'rimi?</th></tr></thead>
+    <tbody>
+    {% for e in recent %}
+      <tr>
+        <td>{{ e.date|date:"d.m.Y" }}</td><td>{{ e.store }}</td>
+        <td class="num">{% if e.is_hidden %}<span class="old">{{ e.price|intcomma }}</span><br><span class="badge inactive">shubhali, hisobda yo'q</span>{% else %}{{ e.price|intcomma }}{% endif %}</td>
+        <td class="muted">{{ e.author|default:"—" }}</td>
+        <td>{% if e.photo %}<a href="{{ e.photo.url }}" target="_blank" rel="noopener">📸 Ko'rish</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td>
+          {% if user.is_authenticated %}
+            <form method="post" action="{% url 'vote_price' e.id %}" class="inline">{% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              <button class="vote {% if e.my_vote is True %}on{% endif %}" name="vote" value="yes" aria-label="To'g'ri" {% if e.author_id == user.id %}disabled title="O'z yozuvingiz"{% endif %}>👍 {{ e.likes }}</button>
+              <button class="vote {% if e.my_vote is False %}on{% endif %}" name="vote" value="no" aria-label="Noto'g'ri" {% if e.author_id == user.id %}disabled title="O'z yozuvingiz"{% endif %}>👎 {{ e.dislikes }}</button>
+            </form>
+          {% else %}<span class="muted">👍 {{ e.likes }} · 👎 {{ e.dislikes }}</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
   </table>
 </div>
 {{ history|json_script:"history-data" }}
 <script>
   const h = JSON.parse(document.getElementById("history-data").textContent);
-  const colors = ["#0f766e","#b91c1c","#1d4ed8","#b45309","#7c3aed","#be185d","#4d7c0f"];
+  const colors = ["#14a89a","#ef4444","#3b82f6","#d97706","#8b5cf6","#ec4899","#65a30d"];
   new Chart(document.getElementById("history"), {
     type: "line",
     data: { labels: h.labels, datasets: h.datasets.map((d, i) => ({ ...d, borderColor: colors[i % colors.length],

@@ -1,0 +1,102 @@
+{% extends "base.html" %}{% load l10n %}
+{% block title %}Yaqin do'konlar{% endblock %}
+{% block content %}
+<h1>Yaqin do'konlar</h1>
+<p class="sub">Tugmani bosing va brauzer so'raganda joylashuvga ruxsat bering. Joylashuvingiz saytga yuborilmaydi va saqlanmaydi — masofa shu qurilmada hisoblanadi.</p>
+<p><button type="button" id="locate" class="btn" style="font-size:1.1rem;padding:12px 20px">📍 Menga yaqin do'konlarni ko'rsat</button></p>
+<div id="status" class="msg" role="status" hidden></div>
+
+<div id="results">
+  {% for r in located %}
+    {# Koordinata JavaScript uchun: localize o'chirilmasa "41,0" (vergul bilan) chiqib, son buziladi. #}
+    <div class="card store-card" data-lat="{{ r.store.latitude|unlocalize }}" data-lng="{{ r.store.longitude|unlocalize }}" hidden>
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+        <div>
+          <b>{{ r.store.name }}</b>
+          {% if not r.store.is_open %}<span class="badge inactive">yopiq</span>{% endif %}
+          {% if r.discounts %}<span class="badge sale">🔥 {{ r.discounts }} ta chegirma</span>{% endif %}
+          {% if not r.store.location_verified %}<span class="badge slow">joylashuv taxminiy</span>{% endif %}
+          <br><span class="muted">{{ r.store.address }}</span>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center">
+          <b class="distance" style="font-size:1.2rem"></b>
+          <a class="btn small" href="{% url 'store_detail' r.store.slug %}">Mahsulotlar</a>
+          {% if r.store.location_verified %}
+            <a class="btn ghost small" target="_blank" rel="noopener noreferrer"
+               href="https://www.google.com/maps/dir/?api=1&amp;destination={{ r.store.latitude|unlocalize }},{{ r.store.longitude|unlocalize }}">Yo'l ko'rsatish</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% empty %}
+    <div class="card muted">Hali birorta do'konning joylashuvi kiritilmagan.</div>
+  {% endfor %}
+</div>
+
+{% if unlocated %}
+  <p class="muted">Joylashuvi kiritilmagan: {% for r in unlocated %}<a href="{% url 'store_detail' r.store.slug %}">{{ r.store.name }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}</p>
+{% endif %}
+
+<script>
+(function () {
+  var btn = document.getElementById("locate");
+  var status = document.getElementById("status");
+  var box = document.getElementById("results");
+
+  function show(text, isError) {
+    status.hidden = false;
+    status.textContent = text;
+    status.className = "msg" + (isError ? " error" : "");
+  }
+
+  // Haversine: yer sharsimonligini hisobga olgan to'g'ri chiziq masofasi (km).
+  function distanceKm(lat1, lng1, lat2, lng2) {
+    var rad = Math.PI / 180;
+    var a = Math.pow(Math.sin((lat2 - lat1) * rad / 2), 2) +
+            Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.pow(Math.sin((lng2 - lng1) * rad / 2), 2);
+    return 6371 * 2 * Math.asin(Math.sqrt(a));
+  }
+
+  function render(pos) {
+    var me = pos.coords;
+    var cards = Array.prototype.slice.call(box.querySelectorAll(".store-card"));
+    cards.forEach(function (c) {
+      c.km = distanceKm(me.latitude, me.longitude, +c.dataset.lat, +c.dataset.lng);
+    });
+    cards.sort(function (a, b) { return a.km - b.km; });
+    cards.forEach(function (c) {
+      c.querySelector(".distance").textContent =
+        c.km < 1 ? Math.round(c.km * 1000) + " m" : c.km.toFixed(1) + " km";
+      c.hidden = false;
+      box.appendChild(c);
+    });
+
+    var text = "Eng yaqinidan boshlab saralandi (to'g'ri chiziq bo'yicha masofa).";
+    if (me.accuracy > 500) text += " Joylashuv aniqligi past: ±" + (me.accuracy / 1000).toFixed(1) + " km.";
+    if (cards.length && cards[0].km > 50) text += " Siz bu do'konlardan ancha uzoqdasiz.";
+    show(text, false);
+    btn.disabled = false;
+  }
+
+  function fail(err) {
+    var texts = {
+      1: "Joylashuvga ruxsat berilmadi. Manzil satri yonidagi belgidan ruxsat berib, qayta bosing.",
+      2: "Joylashuvni aniqlab bo'lmadi. Internet va qurilma joylashuv xizmatini tekshiring.",
+      3: "Joylashuvni aniqlash juda uzoq davom etdi. Qayta urinib ko'ring."
+    };
+    show(texts[err.code] || "Joylashuvni aniqlab bo'lmadi.", true);
+    btn.disabled = false;
+  }
+
+  btn.addEventListener("click", function () {
+    if (!navigator.geolocation || !window.isSecureContext) {
+      show("Bu yerda joylashuvni aniqlab bo'lmaydi: brauzer buni faqat HTTPS (yoki shu kompyuterdagi 127.0.0.1) saytda ruxsat etadi.", true);
+      return;
+    }
+    btn.disabled = true;
+    show("Joylashuv aniqlanmoqda...", false);
+    navigator.geolocation.getCurrentPosition(render, fail, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  });
+})();
+</script>
+{% endblock %}

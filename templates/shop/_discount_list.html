@@ -1,0 +1,30 @@
+{% load humanize %}
+<div class="grid2">
+  <div class="card">
+    <h3 style="margin-top:0">🔥 Hozirgi chegirmalar</h3>
+    <table><tbody>
+    {% for r in active %}
+      <tr>
+        <td><a href="{% url 'product_detail' r.discount.product.slug %}">{{ r.discount.product.name }}</a>
+          {% if show_store %}<br><a class="muted" href="{% url 'store_detail' r.discount.store.slug %}">{{ r.discount.store.name }}</a>{% endif %}</td>
+        <td><span class="badge sale">-{{ r.discount.percent }}%</span></td>
+        <td class="num">{% if r.price %}<span class="old">{{ r.base|intcomma }}</span><br><b class="down">{{ r.price|intcomma }}</b>{% else %}<span class="muted">narx yo'q</span>{% endif %}</td>
+        <td class="muted">{{ r.discount.end_date|date:"d.m" }} gacha<br><small>{% if r.days_left == 0 %}bugun oxirgi kun{% else %}yana {{ r.days_left }} kun{% endif %}</small></td>
+      </tr>
+    {% empty %}<tr><td class="muted">Hozir chegirma yo'q.</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">📅 Kutilayotgan chegirmalar</h3>
+    <table><tbody>
+    {% for r in upcoming %}
+      <tr>
+        <td><a href="{% url 'product_detail' r.discount.product.slug %}">{{ r.discount.product.name }}</a>
+          {% if show_store %}<br><a class="muted" href="{% url 'store_detail' r.discount.store.slug %}">{{ r.discount.store.name }}</a>{% endif %}</td>
+        <td><span class="badge slow">-{{ r.discount.percent }}%</span></td>
+        <td>{{ r.discount.start_date|date:"d.m" }} – {{ r.discount.end_date|date:"d.m" }}<br><small class="muted">{% if r.starts_in == 1 %}ertaga boshlanadi{% else %}{{ r.starts_in }} kundan keyin{% endif %}</small></td>
+      </tr>
+    {% empty %}<tr><td class="muted">Rejalashtirilgan chegirma yo'q.</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+</div>

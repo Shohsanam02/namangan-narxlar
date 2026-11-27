@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Xabarlar{% endblock %}
+{% block content %}
+<h1>🔔 Xabarlar</h1>
+<p class="sub">Siz kutgan narxlar. Yangi kuzatuvni mahsulot sahifasidan qo'shasiz.</p>
+{% for r in rows %}
+<div class="card" style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center">
+  <div>
+    <b><a href="{% url 'product_detail' r.alert.product.slug %}">{{ r.alert.product.name }}</a></b>
+    {% if r.triggered %}<span class="badge active">✅ Narx tushdi!</span>{% else %}<span class="badge inactive">kutilmoqda</span>{% endif %}
+    <br><span class="muted">Kutilgan: {{ r.alert.target_price|intcomma }} so'm yoki arzon.</span>
+    {% if r.price %}Hozir eng arzoni: <b>{{ r.price|intcomma }}</b> so'm — <a href="{% url 'store_detail' r.store.slug %}">{{ r.store.name }}</a>{% else %}<span class="muted">Hozir narxi yo'q.</span>{% endif %}
+  </div>
+  <form method="post" action="{% url 'delete_alert' r.alert.id %}" style="margin:0">{% csrf_token %}<button class="btn ghost small">O'chirish</button></form>
+</div>
+{% empty %}<div class="card muted">Hali kuzatuv yo'q.</div>{% endfor %}
+{% endblock %}

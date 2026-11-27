@@ -6,13 +6,13 @@ median esa SQLite'da yo'q. Hajm oshsa — kunlik agregat jadvaliga o'tkazish ker
 
 from collections import defaultdict
 from datetime import timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from statistics import median
 
-from django.db.models import Count, F, Sum
+from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 
-from .models import Order, OrderItem, PriceEntry, Product, Store
+from .models import Discount, Order, OrderItem, PriceEntry, PriceVote, Product, Store
 
 # "Joriy narx" — juftlikning eng so'nggi yozuvidan oldingi shuncha kun ichidagi yozuvlar medianasi.
 CURRENT_WINDOW_DAYS = 7
@@ -21,6 +21,22 @@ STALE_AFTER_DAYS = 30
 # Faollik: oxirgi ACTIVITY_DAYS kun ichidagi buyurtmalar soni.
 ACTIVITY_DAYS = 7
 ACTIVE_MIN_ORDERS = 5
+# 👎 soni 👍 sonidan shuncha ko'p bo'lsa, yozuv hisobdan chiqariladi.
+HIDE_SCORE = 3
+
+
+def hidden_entry_ids():
+    return (
+        PriceVote.objects.values("entry")
+        .annotate(score=Count("id", filter=Q(is_correct=False)) - Count("id", filter=Q(is_correct=True)))
+        .filter(score__gte=HIDE_SCORE)
+        .values_list("entry", flat=True)
+    )
+
+
+def visible_prices():
+    """Statistikada qatnashadigan narx yozuvlari."""
+    return PriceEntry.objects.exclude(id__in=hidden_entry_ids())
 
 
 def _median(values):
@@ -34,7 +50,7 @@ def current_prices(as_of=None):
     "5 000" o'rniga "500 000" yozsa, o'rtacha qiymat buziladi, median esa deyarli o'zgarmaydi.
     """
     today = as_of or timezone.localdate()
-    rows = PriceEntry.objects.filter(
+    rows = visible_prices().filter(
         date__gt=today - timedelta(days=STALE_AFTER_DAYS), date__lte=today
     ).values_list("store_id", "product_id", "date", "price")
 
@@ -50,11 +66,77 @@ def current_prices(as_of=None):
     return result
 
 
+def apply_discount(price, percent):
+    return (price * (100 - percent) / 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
+def active_discounts(day=None):
+    """{(store_id, product_id): Discount} - shu kuni amalda. Ustma-ust tushsa, kattasi olinadi."""
+    day = day or timezone.localdate()
+    result = {}
+    for d in Discount.objects.filter(start_date__lte=day, end_date__gte=day).order_by("percent"):
+        result[(d.store_id, d.product_id)] = d
+    return result
+
+
+def effective_prices():
+    """Xaridor to'laydigan narx: {pair: {"price", "base", "discount"}}.
+
+    Sayt, savat va buyurtma shu funksiyadan foydalanadi - hamma joyda bir xil narx chiqishi uchun.
+    """
+    discounts = active_discounts()
+    result = {}
+    for pair, base in current_prices().items():
+        d = discounts.get(pair)
+        price = apply_discount(base, d.percent) if d else base
+        result[pair] = {"price": price, "base": base, "discount": d}
+    return result
+
+
+def discount_rows(store=None):
+    """Amaldagi va kutilayotgan chegirmalar. Tugaganlari ko'rsatilmaydi."""
+    today = timezone.localdate()
+    qs = Discount.objects.filter(end_date__gte=today).select_related("store", "product")
+    if store:
+        qs = qs.filter(store=store)
+    prices = current_prices()
+    active, upcoming = [], []
+    for d in qs:
+        base = prices.get((d.store_id, d.product_id))
+        row = {"discount": d, "base": base, "price": apply_discount(base, d.percent) if base else None}
+        if d.start_date <= today:
+            row["days_left"] = (d.end_date - today).days
+            active.append(row)
+        else:
+            row["starts_in"] = (d.start_date - today).days
+            upcoming.append(row)
+    active.sort(key=lambda r: (r["days_left"], r["discount"].store.name))
+    upcoming.sort(key=lambda r: (r["starts_in"], r["discount"].store.name))
+    return active, upcoming
+
+
+def sidebar_stores():
+    """Chap panel uchun: do'konlar, mahsulotlar soni va amaldagi chegirmalar soni."""
+    prices = current_prices()
+    product_count = defaultdict(int)
+    for store_id, _ in prices:
+        product_count[store_id] += 1
+    discount_count = defaultdict(int)
+    for pair in active_discounts():
+        if pair in prices:
+            discount_count[pair[0]] += 1
+    return [
+        {"store": s, "products": product_count[s.id], "discounts": discount_count[s.id]}
+        for s in Store.objects.all()
+    ]
+
+
 def product_offers(product, prices=None):
     """Mahsulot qaysi do'konda qancha — arzonidan qimmatiga. Haftalik o'zgarish foizi bilan."""
     prices = prices if prices is not None else current_prices()
     week_ago = current_prices(timezone.localdate() - timedelta(days=7))
     stores = {s.id: s for s in Store.objects.all()}
+    discounts = active_discounts()
 
     offers = []
     for (store_id, product_id), price in prices.items():
@@ -64,7 +146,9 @@ def product_offers(product, prices=None):
         change = None
         if old:
             change = float((price - old) / old * 100)
-        offers.append({"store": stores[store_id], "price": price, "change": change})
+        d = discounts.get((store_id, product_id))
+        final = apply_discount(price, d.percent) if d else price
+        offers.append({"store": stores[store_id], "price": final, "base": price, "discount": d, "change": change})
     offers.sort(key=lambda o: o["price"])
     return offers
 
@@ -76,7 +160,7 @@ def price_history(product, days=30):
     labels = [start + timedelta(days=i) for i in range(days)]
 
     grouped = defaultdict(lambda: defaultdict(list))
-    rows = PriceEntry.objects.filter(product=product, date__gte=start).values_list("store__name", "date", "price")
+    rows = visible_prices().filter(product=product, date__gte=start).values_list("store__name", "date", "price")
     for store_name, date, price in rows:
         grouped[store_name][date].append(price)
 
@@ -181,11 +265,10 @@ def store_ranking():
 
 def cheapest_by_product():
     """Bosh sahifa uchun: har bir mahsulot, eng arzon do'kon va narxlar oralig'i."""
-    prices = current_prices()
     stores = {s.id: s for s in Store.objects.all()}
     by_product = defaultdict(list)
-    for (store_id, product_id), price in prices.items():
-        by_product[product_id].append((price, stores[store_id]))
+    for (store_id, product_id), info in effective_prices().items():
+        by_product[product_id].append((info["price"], stores[store_id], info["discount"]))
 
     rows = []
     for p in Product.objects.select_related("category"):
@@ -197,8 +280,63 @@ def cheapest_by_product():
                 "product": p,
                 "min_price": offers[0][0],
                 "min_store": offers[0][1],
+                "min_discount": offers[0][2],
                 "max_price": offers[-1][0],
                 "store_count": len(offers),
             }
         )
+    return rows
+
+
+def weekly_report(limit=5):
+    """Bu hafta eng ko'p qimmatlashgan va arzonlashgan mahsulotlar (chegirmasiz narx bo'yicha).
+
+    Faqat ikkala haftada ham narxi bor do'kon+mahsulot juftliklari solishtiriladi: aks holda
+    ro'yxatga qimmat do'kon qo'shilishining o'zi "narx oshdi" bo'lib ko'rinardi.
+    """
+    today = timezone.localdate()
+    now, before = current_prices(today), current_prices(today - timedelta(days=7))
+    pairs = defaultdict(list)
+    for pair in now.keys() & before.keys():
+        pairs[pair[1]].append((before[pair], now[pair]))
+
+    products = {p.id: p for p in Product.objects.all()}
+    rows = []
+    for product_id, values in pairs.items():
+        old = _median([v[0] for v in values])
+        new = _median([v[1] for v in values])
+        change = round(float((new - old) / old * 100), 1)
+        rows.append({"product": products[product_id], "old": old, "new": new, "change": change})
+    up = sorted((r for r in rows if r["change"] > 0), key=lambda r: -r["change"])[:limit]
+    down = sorted((r for r in rows if r["change"] < 0), key=lambda r: r["change"])[:limit]
+    return up, down
+
+
+def cheapest_offer_by_product():
+    """{product_id: (narx, store_id)} — hozir eng arzon (chegirma bilan)."""
+    best = {}
+    for (store_id, product_id), info in effective_prices().items():
+        if product_id not in best or info["price"] < best[product_id][0]:
+            best[product_id] = (info["price"], store_id)
+    return best
+
+
+def alert_rows(user):
+    alerts = list(user.price_alerts.select_related("product"))
+    if not alerts:
+        return []
+    best = cheapest_offer_by_product()
+    stores = {s.id: s for s in Store.objects.all()}
+    rows = []
+    for a in alerts:
+        offer = best.get(a.product_id)
+        rows.append(
+            {
+                "alert": a,
+                "price": offer[0] if offer else None,
+                "store": stores[offer[1]] if offer else None,
+                "triggered": bool(offer) and offer[0] <= a.target_price,
+            }
+        )
+    rows.sort(key=lambda r: (not r["triggered"], r["alert"].product.name))
     return rows

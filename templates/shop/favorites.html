@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Sevimlilar{% endblock %}
+{% block content %}
+<h1>❤️ Sevimlilar</h1>
+<p class="sub">Ko'p oladigan mahsulotlaringiz va ular hozir qayerda eng arzon.</p>
+<div class="card">
+<table>
+  <thead><tr><th>Mahsulot</th><th>Eng arzon do'kon</th><th class="num">Eng arzon</th><th class="num">Eng qimmat</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{% include "shop/_heart.html" with product=r.product %} <a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a> <span class="muted">/ {{ r.product.unit }}</span></td>
+      <td><a href="{% url 'store_detail' r.min_store.slug %}">{{ r.min_store.name }}</a></td>
+      <td class="num down">{% if r.min_discount %}<span class="badge sale">-{{ r.min_discount.percent }}%</span> {% endif %}<b>{{ r.min_price|intcomma }}</b></td>
+      <td class="num up">{{ r.max_price|intcomma }}</td>
+    </tr>
+  {% endfor %}
+  {% for p in without_price %}
+    <tr><td>{% include "shop/_heart.html" with product=p %} <a href="{% url 'product_detail' p.slug %}">{{ p.name }}</a></td><td colspan="3" class="muted">Hozir narxi yo'q</td></tr>
+  {% endfor %}
+  {% if not rows and not without_price %}<tr><td colspan="4" class="muted">Hali sevimli yo'q. <a href="{% url 'home' %}">Mahsulotlar</a> yonidagi 🤍 ni bosing.</td></tr>{% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

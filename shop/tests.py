@@ -1,13 +1,21 @@
+import tempfile
 from datetime import timedelta
 from decimal import Decimal
+from io import BytesIO, StringIO
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from PIL import Image
 
 from . import stats
-from .models import Category, Order, OrderItem, PriceEntry, Product, Store
+from .models import (
+    Category, Discount, Favorite, Order, OrderItem, PriceAlert, PriceEntry, PriceVote, Product, Store,
+)
 
 
 class BaseData(TestCase):
@@ -139,3 +147,228 @@ class PagesSmokeTests(BaseData):
             reverse("product_detail", args=["olma"]), reverse("store_detail", args=["arzon"]),
         ]:
             self.assertEqual(self.client.get(url).status_code, 200, url)
+
+
+class DiscountTests(BaseData):
+    def discount(self, percent, start=0, end=3, store=None):
+        return Discount.objects.create(
+            store=store or self.cheap, product=self.olma, percent=percent,
+            start_date=self.today + timedelta(days=start), end_date=self.today + timedelta(days=end),
+        )
+
+    def test_only_current_discount_applies_and_biggest_wins(self):
+        self.price(self.cheap, self.olma, 10000)
+        self.discount(10)
+        self.discount(20, start=0, end=0)    # oxirgi kuni ham amalda
+        self.discount(50, start=2, end=5)    # hali boshlanmagan
+        self.discount(60, start=-9, end=-1)  # tugagan
+        info = stats.effective_prices()[(self.cheap.id, self.olma.id)]
+        self.assertEqual((info["price"], info["base"]), (Decimal("8000"), Decimal("10000")))
+        active, upcoming = stats.discount_rows()
+        self.assertEqual(sorted(r["discount"].percent for r in active), [10, 20])
+        self.assertEqual([r["discount"].percent for r in upcoming], [50])
+
+    def test_order_uses_discounted_price(self):
+        self.price(self.cheap, self.olma, 10000)
+        self.discount(15)
+        self.client.login(username="u0", password="pass12345!")
+        self.client.post(reverse("cart_add"), {"store": self.cheap.id, "product": self.olma.id, "qty": "2"})
+        self.client.post(reverse("checkout", args=[self.cheap.id]), {"phone": "1", "address": "x"})
+        self.assertEqual(Order.objects.get().total, Decimal("17000"))
+
+    def test_discount_changes_cheapest_but_not_price_index(self):
+        self.price(self.cheap, self.olma, 10000)
+        self.price(self.mid, self.olma, 11000)
+        self.discount(20, store=self.mid)
+        self.assertEqual(stats.cheapest_by_product()[0]["min_store"], self.mid)
+        rows = stats.store_ranking()
+        self.assertEqual(rows[0]["store"], self.mid)  # reyting asl narx bo'yicha
+
+    def test_end_before_start_invalid(self):
+        d = Discount(store=self.cheap, product=self.olma, percent=10,
+                     start_date=self.today, end_date=self.today - timedelta(days=1))
+        with self.assertRaises(ValidationError):
+            d.full_clean()
+
+    def test_pages_show_only_selected_store(self):
+        self.price(self.cheap, self.olma, 10000)
+        self.price(self.mid, self.banan, 20000)
+        self.discount(10)
+        resp = self.client.get(reverse("store_detail", args=["arzon"]))
+        self.assertEqual([i["product"] for i in resp.context["items"]], [self.olma])
+        self.assertContains(resp, "-10%")
+        self.assertContains(self.client.get(reverse("discounts")), "-10%")
+
+
+class CartStepperTests(BaseData):
+    def test_plus_minus(self):
+        self.price(self.cheap, self.olma, 1000)
+        ids = {"store": self.cheap.id, "product": self.olma.id}
+        key = f"{self.cheap.id}:{self.olma.id}"
+        self.client.post(reverse("cart_add"), {**ids, "qty": "1"})
+
+        def step(action):
+            self.client.post(reverse("cart_change"), {**ids, "action": action})
+            return Decimal(self.client.session["cart"][key])
+
+        self.assertEqual(step("plus"), 2)
+        self.assertEqual(step("minus"), 1)
+        self.assertEqual(step("minus"), 1)  # 1 dan pastga tushmaydi, o'chib ketmaydi
+        self.assertEqual(step("boshqa"), 1)
+
+    def test_change_does_not_create_items(self):
+        self.client.post(reverse("cart_change"), {"store": 1, "product": 1, "action": "plus"})
+        self.assertEqual(self.client.session.get("cart", {}), {})
+
+
+class NearbyTests(BaseData):
+    def test_page_splits_located_stores_and_hides_unverified_route(self):
+        Store.objects.filter(pk=self.cheap.pk).update(latitude=Decimal("41.001000"), longitude=Decimal("71.670000"))
+        Store.objects.filter(pk=self.mid.pk).update(
+            latitude=Decimal("41.002000"), longitude=Decimal("71.671000"), location_verified=True
+        )
+        resp = self.client.get(reverse("nearby"))
+        self.assertEqual({r["store"] for r in resp.context["located"]}, {self.cheap, self.mid})
+        self.assertEqual([r["store"] for r in resp.context["unlocated"]], [self.pricey])
+        # Yo'l havolasi faqat tekshirilgan do'konda; koordinata nuqta bilan (vergul emas) chiqadi.
+        self.assertContains(resp, "google.com/maps/dir/", count=1)
+        self.assertContains(resp, "destination=41.002000,71.671000")
+        self.assertContains(resp, 'data-lat="41.001000"')
+
+    def test_seed_locations_keeps_existing_coordinates(self):
+        Store.objects.filter(pk=self.cheap.pk).update(latitude=Decimal("1"), longitude=Decimal("2"))
+        call_command("seed_locations", verbosity=0, stdout=StringIO())
+        self.cheap.refresh_from_db()
+        self.mid.refresh_from_db()
+        self.assertEqual(self.cheap.latitude, Decimal("1"))
+        self.assertIsNotNone(self.mid.latitude)
+        self.assertFalse(self.mid.location_verified)
+
+    def test_coordinates_must_come_in_pairs(self):
+        self.cheap.latitude = Decimal("41")
+        with self.assertRaises(ValidationError):
+            self.cheap.full_clean()
+
+
+class VoteTests(BaseData):
+    def setUp(self):
+        super().setUp()
+        User = get_user_model()
+        self.voters = [User.objects.create_user(f"v{i}", password="pass12345!") for i in range(3)]
+        self.good = self.price(self.cheap, self.olma, 10000, user=0)
+        self.bad = self.price(self.cheap, self.olma, 90000, user=1)
+
+    def vote(self, user, entry, value):
+        self.client.force_login(user)
+        return self.client.post(reverse("vote_price", args=[entry.id]), {"vote": value})
+
+    def test_three_dislikes_hide_price_from_stats(self):
+        pair = (self.cheap.id, self.olma.id)
+        for voter in self.voters[:2]:
+            self.vote(voter, self.bad, "no")
+        self.assertEqual(stats.current_prices()[pair], Decimal("50000"))
+        self.vote(self.voters[2], self.bad, "no")
+        self.assertEqual(stats.current_prices()[pair], Decimal("10000"))
+        self.assertContains(self.client.get(reverse("product_detail", args=["olma"])), "shubhali")
+
+    def test_one_vote_per_user_toggle_and_no_self_vote(self):
+        self.vote(self.voters[0], self.bad, "no")
+        self.vote(self.voters[0], self.bad, "yes")
+        self.assertEqual([v.is_correct for v in PriceVote.objects.all()], [True])
+        self.vote(self.voters[0], self.bad, "yes")
+        self.assertEqual(PriceVote.objects.count(), 0)
+        self.vote(self.users[1], self.bad, "yes")  # o'z yozuvi
+        self.assertEqual(PriceVote.objects.count(), 0)
+
+    def test_changing_price_resets_votes(self):
+        self.vote(self.voters[0], self.bad, "no")
+        self.client.force_login(self.users[1])
+        self.client.post(reverse("add_price"), {
+            "store": self.cheap.id, "product": self.olma.id, "price": "11000", "date": self.today.isoformat()})
+        self.assertEqual(PriceVote.objects.count(), 0)
+
+
+class DateAndPhotoTests(BaseData):
+    def post(self, **extra):
+        self.client.force_login(self.users[0])
+        data = {"store": self.cheap.id, "product": self.olma.id, "price": "10000", "date": self.today.isoformat()}
+        return self.client.post(reverse("add_price"), {**data, **extra})
+
+    def test_future_and_old_dates_rejected(self):
+        for days in (1, -8):
+            self.post(date=(self.today + timedelta(days=days)).isoformat())
+        self.assertEqual(PriceEntry.objects.count(), 0)
+
+    def test_photo_is_reencoded_without_gps_metadata(self):
+        buf = BytesIO()
+        exif = Image.Exif()
+        exif[0x010F] = "MaxfiyKamera"
+        Image.new("RGB", (3000, 1000), "red").save(buf, "JPEG", exif=exif)
+        with tempfile.TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
+            self.post(photo=SimpleUploadedFile("uy_manzilim.jpg", buf.getvalue(), "image/jpeg"))
+            entry = PriceEntry.objects.get()
+            self.assertNotIn("manzil", entry.photo.name)
+            with Image.open(entry.photo.path) as img:
+                self.assertEqual(img.size, (1600, 533))
+                self.assertEqual(len(img.getexif()), 0)
+
+    def test_non_image_rejected(self):
+        resp = self.post(photo=SimpleUploadedFile("x.jpg", b"<script>alert(1)</script>", "image/jpeg"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(PriceEntry.objects.count(), 0)
+
+
+class FavoriteAlertReorderTests(BaseData):
+    def setUp(self):
+        super().setUp()
+        self.price(self.cheap, self.olma, 10000)
+        self.client.force_login(self.users[0])
+
+    def test_favorite_toggle_and_safe_redirect(self):
+        url = reverse("toggle_favorite", args=[self.olma.id])
+        resp = self.client.post(url, {"next": "https://yomon.example/"})
+        self.assertEqual(resp.url, reverse("favorites"))
+        self.assertContains(self.client.get(reverse("favorites")), "Olma")
+        self.client.post(url)
+        self.assertEqual(Favorite.objects.count(), 0)
+
+    def test_alert_triggers_only_at_target(self):
+        url = reverse("set_alert", args=[self.olma.id])
+        self.client.post(url, {"target_price": "9000"})
+        self.assertEqual(self.client.get(reverse("alerts")).context["alert_count"], 0)
+        self.client.post(url, {"target_price": "10000"})
+        self.assertEqual(PriceAlert.objects.count(), 1)
+        self.assertEqual(self.client.get(reverse("alerts")).context["alert_count"], 1)
+
+    def test_cannot_delete_others_alert_or_reorder_others_order(self):
+        alert = PriceAlert.objects.create(user=self.users[1], product=self.olma, target_price=1)
+        order = Order.objects.create(user=self.users[1], store=self.cheap, phone="1", address="x")
+        self.assertEqual(self.client.post(reverse("delete_alert", args=[alert.id])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("reorder", args=[order.id])).status_code, 404)
+
+    def test_reorder_sets_quantity_and_skips_unpriced(self):
+        order = Order.objects.create(user=self.users[0], store=self.cheap, phone="1", address="x")
+        for product in (self.olma, self.banan):
+            OrderItem.objects.create(order=order, product=product, unit_price=1, quantity=Decimal("2"))
+        for _ in range(2):
+            self.client.post(reverse("reorder", args=[order.id]))
+        self.assertEqual(self.client.session["cart"], {f"{self.cheap.id}:{self.olma.id}": "2.00"})
+
+
+class ReportTests(BaseData):
+    def test_weekly_compares_same_stores_only(self):
+        self.price(self.cheap, self.olma, 10000, days_ago=8)
+        self.price(self.cheap, self.olma, 12000)
+        self.price(self.pricey, self.olma, 99000)  # bu hafta qo'shilgan do'kon hisobga kirmaydi
+        up, down = stats.weekly_report()
+        self.assertEqual((up[0]["change"], down), (20.0, []))
+
+    def test_pages_render(self):
+        for name in ("weekly", "home"):
+            self.assertEqual(self.client.get(reverse(name)).status_code, 200)
+
+
+class AddPriceFormTests(BaseData):
+    def test_date_prefilled_in_iso_format(self):
+        self.client.force_login(self.users[0])
+        self.assertContains(self.client.get(reverse("add_price")), f'value="{self.today.isoformat()}"')

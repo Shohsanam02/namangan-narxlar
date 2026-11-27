@@ -1,5 +1,8 @@
 {% extends "base.html" %}{% load humanize %}
 {% block content %}
+<div class="layout">
+{% include "shop/_sidebar.html" %}
+<div>
 <h1>Qayerda arzon?</h1>
 <p class="sub">Namangandagi do'konlar narxlari — foydalanuvchilar yozib boradi. Narx = oxirgi 7 kundagi yozuvlar medianasi.</p>
 <form method="get" class="chips">
@@ -15,9 +18,9 @@
   <tbody>
   {% for r in rows %}
     <tr>
-      <td><a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a> <span class="muted">/ {{ r.product.unit }}</span></td>
+      <td>{% include "shop/_heart.html" with product=r.product %} <a href="{% url 'product_detail' r.product.slug %}">{{ r.product.name }}</a> <span class="muted">/ {{ r.product.unit }}</span></td>
       <td><a href="{% url 'store_detail' r.min_store.slug %}">{{ r.min_store.name }}</a></td>
-      <td class="num down"><b>{{ r.min_price|intcomma }}</b></td>
+      <td class="num down">{% if r.min_discount %}<span class="badge sale">-{{ r.min_discount.percent }}%</span> {% endif %}<b>{{ r.min_price|intcomma }}</b></td>
       <td class="num up">{{ r.max_price|intcomma }}</td>
       <td class="num muted">{{ r.store_count }}</td>
     </tr>
@@ -26,5 +29,7 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
+</div>
 </div>
 {% endblock %}

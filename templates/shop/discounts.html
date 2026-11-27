@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Chegirmalar{% endblock %}
+{% block content %}
+<div class="layout">
+{% include "shop/_sidebar.html" %}
+<div>
+<h1>Chegirmalar</h1>
+<p class="sub">Hozir qayerda chegirma bor va keyingisi qachon boshlanadi.</p>
+{% include "shop/_discount_list.html" with show_store=True %}
+</div>
+</div>
+{% endblock %}

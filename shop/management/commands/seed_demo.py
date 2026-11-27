@@ -8,12 +8,13 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 from django.utils.text import slugify
 
-from shop.models import Category, Order, OrderItem, PriceEntry, Product, Store
+from shop.models import Category, Discount, Order, OrderItem, PriceEntry, Product, Store
 
 # (nomi, narx koeffitsienti, oxirgi 7 kundagi buyurtmalar soni)
 STORES = [
@@ -97,6 +98,7 @@ class Command(BaseCommand):
                             PriceEntry(store=store, product=product, price=round100(price), date=day, author=author)
                         )
         PriceEntry.objects.bulk_create(entries)
+        Discount.objects.all().delete()
 
         # Buyurtmalar: oxirgi 7 kunda STORES dagi son, undan oldin ham bir nechta (tarix uchun).
         from shop.stats import current_prices
@@ -121,6 +123,9 @@ class Command(BaseCommand):
                         quantity=Decimal(rnd.choice(["0.5", "1", "1.5", "2", "3"])),
                     )
                 n_orders += 1
+
+        call_command("seed_discounts", stdout=self.stdout)
+        call_command("seed_locations", stdout=self.stdout)
 
         self.stdout.write(self.style.SUCCESS(
             f"{len(stores)} do'kon, {len(products)} mahsulot, {len(entries)} narx yozuvi, {n_orders} buyurtma yaratildi. "
